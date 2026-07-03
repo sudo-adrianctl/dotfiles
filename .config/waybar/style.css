@@ -1,0 +1,91 @@
+/* =========================
+   GLOBAL STYLE
+========================= */
+
+* {
+    font-family: "JetBrainsMono Nerd Font", "Font Awesome 6 Free";
+    font-size: 13px;
+    font-weight: 500;
+}
+
+/* =========================
+   WAYBAR BACKGROUND (GLASS)
+========================= */
+
+window#waybar {
+    background: rgba(20, 20, 30, 0.55);
+    border-radius: 14px;
+    margin: 8px 10px;
+    padding: 6px 10px;
+
+    border: 1px solid rgba(255, 255, 255, 0.08);
+
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* =========================
+   WORKSPACES (ML4W STYLE)
+========================= */
+
+#workspaces button {
+    padding: 4px 10px;
+    margin: 3px;
+    border-radius: 10px;
+
+    background: rgba(255, 255, 255, 0.06);
+    color: #cdd6f4;
+
+    transition: all 0.2s ease;
+}
+
+#workspaces button:hover {
+    background: rgba(137, 180, 250, 0.25);
+}
+
+#workspaces button.active {
+    background: rgba(137, 180, 250, 0.9);
+    color: #1e1e2e;
+    font-weight: bold;
+}
+
+/* =========================
+   MODULE BOX STYLE
+========================= */
+
+#clock,
+#cpu,
+#memory,
+#network,
+#pulseaudio,
+#tray {
+    padding: 4px 10px;
+    margin: 3px;
+    border-radius: 10px;
+
+    background: rgba(255, 255, 255, 0.06);
+    color: #cdd6f4;
+}
+
+/* =========================
+   HOVER EFFECT
+========================= */
+
+#clock:hover,
+#cpu:hover,
+#memory:hover,
+#network:hover,
+#pulseaudio:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+/* =========================
+   CRITICAL STATES
+========================= */
+
+#network.disconnected {
+    color: #f38ba8;
+}
+
+#pulseaudio.muted {
+    color: #f38ba8;
+}

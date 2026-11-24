@@ -41,9 +41,11 @@ mkdir -p "${WORK_DIR}" "${SHIM_DIR}"
 
 # --- apt deps: everything Hyprland/aquamarine/toolkit/paper/portal need from distro ---
 # Covers CMakeLists pkg_check_modules + XWayland xcb-* + hyprtoolkit (iniparser/abseil) + portal.
-sudo apt update
-sudo apt install -y \
-  meson wget curl git python3 build-essential ninja-build cmake cmake-extras \
+if ! sudo apt-get update; then
+  echo "Package index refresh failed; trying to install with the available indexes." >&2
+fi
+sudo apt-get install -y \
+  meson wget curl git python3 python3-jinja2 build-essential ninja-build cmake cmake-extras \
   gettext gettext-base fontconfig libfontconfig-dev libffi-dev libxml2-dev \
   libdrm-dev libxkbcommon-x11-dev libxkbregistry-dev libxkbcommon-dev \
   libpixman-1-dev libudev-dev libseat-dev seatd \
@@ -77,8 +79,6 @@ export PATH="${GCC_PREFIX}/bin:${PREFIX}/bin:${PATH}"
 export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib/x86_64-linux-gnu/pkgconfig:${PREFIX}/share/pkgconfig:${PKG_CONFIG_PATH:-}"
 export LD_LIBRARY_PATH="${GCC_PREFIX}/lib64:${PREFIX}/lib:${PREFIX}/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export CMAKE_PREFIX_PATH="${PREFIX}${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
-export CC="${GCC_PREFIX}/bin/gcc-15"
-export CXX="${GCC_PREFIX}/bin/g++-15"
 
 need_pkg() {
   # return 0 if we should build (missing / wrong version / FORCE=1)
@@ -184,6 +184,13 @@ ensure_repo() {
   fi
 }
 
+update_submodules() {
+  local dir="$1"
+  shift
+  git -C "${dir}" submodule update --init --recursive --depth 1 -- "$@" ||
+    git -C "${dir}" submodule update --init --recursive -- "$@"
+}
+
 cmake_build_install() {
   local dir="$1"
   shift
@@ -228,7 +235,8 @@ if [[ ! -x "${GCC_PREFIX}/bin/g++-15" ]]; then
   mkdir -p "${WORK_DIR}/gcc-15/build"
   cd "${WORK_DIR}/gcc-15/build"
   if [[ ! -f Makefile ]]; then
-    ../configure --prefix="${GCC_PREFIX}" --program-suffix=-15 \
+    CFLAGS=-O2 CXXFLAGS=-O2 CFLAGS_FOR_TARGET=-O2 CXXFLAGS_FOR_TARGET=-O2 \
+      "${WORK_DIR}/gcc-15/configure" --prefix="${GCC_PREFIX}" --program-suffix=-15 \
       --enable-languages=c,c++ --disable-multilib --disable-bootstrap
   fi
   make -j"${JOBS}"
@@ -237,13 +245,16 @@ if [[ ! -x "${GCC_PREFIX}/bin/g++-15" ]]; then
   sudo ldconfig
 fi
 "${GCC_PREFIX}/bin/g++-15" --version
+export CC="${GCC_PREFIX}/bin/gcc-15"
+export CXX="${GCC_PREFIX}/bin/g++-15"
 
 # Shim: GCC 15 libstdc++ lacks std::ranges::starts_with (GCC 16+). Inject via -include; do not edit Hyprland.
-if [[ ! -f "${SHIM_HPP}" ]]; then
-  cat > "${SHIM_HPP}" <<'EOF'
+cat > "${SHIM_HPP}" <<'EOF'
 #pragma once
 /* GCC 15 libstdc++ lacks std::ranges::starts_with (added in GCC 16).
  * Injected via -include so Hyprland sources stay unmodified. */
+#if __cplusplus >= 202002L
+#include <algorithm>
 #include <ranges>
 #include <iterator>
 #include <utility>
@@ -271,8 +282,8 @@ inline constexpr __starts_with_fn starts_with{};
 } // namespace ranges
 } // namespace std
 #endif
+#endif
 EOF
-fi
 
 # --- Lua 5.5 (Hyprland pkg_search_module looks for lua5.5) ---
 if need_pkg lua5.5 "${LUA_VERSION}"; then
@@ -284,6 +295,7 @@ if need_pkg lua5.5 "${LUA_VERSION}"; then
   cd "${LUA_DIR}"
   make all MYCFLAGS="-fPIC" CC="${CC}" -j"${JOBS}"
   sudo make install INSTALL_TOP="${PREFIX}"
+  sudo install -d "${PREFIX}/lib/pkgconfig"
   sudo tee "${PREFIX}/lib/pkgconfig/lua5.5.pc" >/dev/null <<EOF
 prefix=${PREFIX}
 exec_prefix=\${prefix}
@@ -392,17 +404,18 @@ if need_pkg hyprwire "${HYPRWIRE_VERSION}"; then
   cmake_build_install "${WORK_DIR}/hyprwire"
 fi
 
-# --- optional extras: portal / toolkit / paper ---
-if need_cmd xdg-desktop-portal-hyprland; then
-  ensure_repo "${WORK_DIR}/xdg-desktop-portal-hyprland" \
-    "https://github.com/hyprwm/xdg-desktop-portal-hyprland.git" "${XDPH_VERSION}"
-  meson_build_install "${WORK_DIR}/xdg-desktop-portal-hyprland"
-fi
-
+# --- optional extras: toolkit / portal / paper ---
 if need_pkg hyprtoolkit "${HYPRTOOLKIT_VERSION}"; then
   ensure_repo "${WORK_DIR}/hyprtoolkit" \
     "https://github.com/hyprwm/hyprtoolkit.git" "v${HYPRTOOLKIT_VERSION}"
   cmake_build_install "${WORK_DIR}/hyprtoolkit"
+fi
+
+if [[ "${FORCE}" == "1" || ! -x "${PREFIX}/libexec/xdg-desktop-portal-hyprland" ]] && need_cmd xdg-desktop-portal-hyprland; then
+  ensure_repo "${WORK_DIR}/xdg-desktop-portal-hyprland" \
+    "https://github.com/hyprwm/xdg-desktop-portal-hyprland.git" "${XDPH_VERSION}"
+  update_submodules "${WORK_DIR}/xdg-desktop-portal-hyprland" subprojects/hyprland-protocols
+  cmake_build_install "${WORK_DIR}/xdg-desktop-portal-hyprland" -DBUILD_TESTING=OFF
 fi
 
 if need_cmd hyprpaper; then
@@ -419,8 +432,7 @@ if need_pkg hyprland "${HYPRLAND_VERSION}"; then
   ensure_repo "${WORK_DIR}/Hyprland" \
     "https://github.com/hyprwm/Hyprland.git" "v${HYPRLAND_VERSION}"
   # udis86 (+ optional tracy/protocols) come from submodules — do not patch sources
-  git -C "${WORK_DIR}/Hyprland" submodule update --init --recursive --depth 1 || \
-    git -C "${WORK_DIR}/Hyprland" submodule update --init --recursive
+  update_submodules "${WORK_DIR}/Hyprland"
   cmake_build_install "${WORK_DIR}/Hyprland" \
     "-DCMAKE_CXX_FLAGS=-include ${SHIM_HPP}"
 fi
